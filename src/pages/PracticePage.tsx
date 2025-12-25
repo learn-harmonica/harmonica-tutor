@@ -14,6 +14,9 @@ import {
   savePracticeTake,
   type PracticeTake
 } from '../practice/takes';
+import { convertMidiToTab, tabToMidi } from '../tab';
+import { playTone } from '../audio/playTone';
+import StaffNotation from '../components/StaffNotation';
 
 type Breath = 'blow' | 'draw';
 
@@ -74,6 +77,12 @@ export default function PracticePage() {
   const [takes, setTakes] = useState<PracticeTake[]>(() => loadPracticeTakes());
   const [recordingAudio, setRecordingAudio] = useState(false);
   const [recordingAudioError, setRecordingAudioError] = useState<string | null>(null);
+  const [recordingTab, setRecordingTab] = useState(false);
+  const [currentTab, setCurrentTab] = useState<string[]>([]);
+  const [tabTimestamps, setTabTimestamps] = useState<number[]>([]);
+  const startTimeRef = useRef<number>(0);
+  const [notationMode, setNotationMode] = useState<'tab' | 'staff'>('tab');
+  const [currentNoteIndex, setCurrentNoteIndex] = useState<number>(-1);
   const [searchParams] = useSearchParams();
 
   const {
@@ -87,6 +96,7 @@ export default function PracticePage() {
     stabilityCents,
     frame,
     stream,
+    audioContext,
     start,
     stop
   } = useMicrophonePitch();
@@ -121,7 +131,16 @@ export default function PracticePage() {
     }
 
     frameHistoryRef.current = [...frameHistoryRef.current, frame].slice(-40);
-  }, [frame]);
+
+    if (recordingTab && frame.frequency !== null) {
+      const midi = Math.round(69 + 12 * Math.log2(frame.frequency / 440));
+      const tabSymbol = convertMidiToTab(midi);
+      if (tabSymbol) {
+        setCurrentTab(prev => [...prev, tabSymbol]);
+        setTabTimestamps(prev => [...prev, frame.t - startTimeRef.current]);
+      }
+    }
+  }, [frame, recordingTab]);
 
   useEffect(() => {
     if (status !== 'listening') {
@@ -191,8 +210,9 @@ export default function PracticePage() {
       metrics
     );
 
-    setTakes(savePracticeTake(take));
-  }, [breath, hole, selectedKey, target]);
+    const takeWithTab = { ...take, tab: currentTab, timestamps: tabTimestamps };
+    setTakes(savePracticeTake(takeWithTab));
+  }, [breath, hole, selectedKey, target, currentTab, tabTimestamps]);
 
   const recordAudioTake = useCallback(async () => {
     setRecordingAudioError(null);
@@ -278,7 +298,9 @@ export default function PracticePage() {
           dataUrl,
           sizeBytes: blob.size,
           durationMs: Math.round(durationMs)
-        }
+        },
+        tab: currentTab,
+        timestamps: tabTimestamps
       };
 
       setTakes(savePracticeTake(withAudio));
@@ -419,6 +441,45 @@ export default function PracticePage() {
               >
                 {recordingAudio ? 'Recording…' : 'Record audio (3s)'}
               </button>
+              <button
+                className="rounded border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+                disabled={status !== 'listening'}
+                onClick={() => {
+                  if (!recordingTab) {
+                    setCurrentTab([]);
+                    setTabTimestamps([]);
+                    startTimeRef.current = performance.now();
+                  }
+                  setRecordingTab(!recordingTab);
+                }}
+                type="button"
+              >
+                {recordingTab ? 'Stop Tab Recording' : 'Record Tab'}
+              </button>
+              <button
+                className="rounded border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 disabled:opacity-50"
+                disabled={!currentTab.length || !audioContext}
+                onClick={() => {
+                  if (!currentTab.length) return;
+                  let currentTime = 0;
+                  currentTab.forEach((tabSymbol, index) => {
+                    const midi = tabToMidi(tabSymbol);
+                    if (midi && audioContext) {
+                      const frequency = 440 * Math.pow(2, (midi - 69) / 12);
+                      const duration = index < tabTimestamps.length - 1 ? (tabTimestamps[index + 1] - tabTimestamps[index]) / 1000 : 0.5;
+                      setTimeout(() => {
+                        setCurrentNoteIndex(index);
+                        playTone(audioContext, frequency, duration);
+                        setTimeout(() => setCurrentNoteIndex(-1), duration * 1000);
+                      }, currentTime * 1000);
+                      currentTime += duration;
+                    }
+                  });
+                }}
+                type="button"
+              >
+                Play Tab
+              </button>
               <div className="text-xs text-slate-500">
                 Tip: long tones work best. Vibrato and bends will confuse detection.
               </div>
@@ -427,6 +488,19 @@ export default function PracticePage() {
             {recordingAudioError ? (
               <div className="mt-2 text-xs text-rose-200">{recordingAudioError}</div>
             ) : null}
+            {currentTab.length > 0 && (
+              <div className="mt-2 text-sm text-slate-300">
+                <div className="flex items-center gap-2 mb-2">
+                  <button onClick={() => setNotationMode('tab')} className={notationMode === 'tab' ? 'underline' : ''}>Tab</button>
+                  <button onClick={() => setNotationMode('staff')} className={notationMode === 'staff' ? 'underline' : ''}>Staff</button>
+                </div>
+                {notationMode === 'tab' ? (
+                  <div>Tab: {currentTab.map((t, i) => <span key={i} style={i === currentNoteIndex ? { color: 'red' } : {}}>{t} </span>)}</div>
+                ) : (
+                  <StaffNotation tab={currentTab} timestamps={tabTimestamps} currentNoteIndex={currentNoteIndex} />
+                )}
+              </div>
+            )}
           </div>
         </div>
 

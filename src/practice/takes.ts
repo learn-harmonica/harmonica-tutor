@@ -35,6 +35,8 @@ export type PracticeTake = {
   target: PracticeTarget;
   metrics: PracticeTakeMetrics;
   audio?: PracticeTakeAudio;
+  tab?: string[];
+  timestamps?: number[];
 };
 
 const STORAGE_KEY = 'harmonica.practice.takes';

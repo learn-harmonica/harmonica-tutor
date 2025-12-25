@@ -193,6 +193,7 @@ export function useMicrophonePitch() {
     stabilityCents,
     frame,
     stream: streamRef.current,
+    audioContext: audioContextRef.current,
     start,
     stop
   };
